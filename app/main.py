@@ -170,6 +170,14 @@ async def transcribe(
         if avg_no_speech > 0.7:
             return {"ok": True, "skipped": True}
 
+    # Discard chunks where Whisper transcribed in a different language than expected
+    # (cross-language output is almost always a hallucination)
+    LANG_BASES = {"en": "english", "no": "norwegian", "ru": "russian"}
+    expected_base = LANG_BASES.get(lang)
+    detected_lang = body.get("language", "").lower()
+    if expected_base and detected_lang and expected_base not in detected_lang:
+        return {"ok": True, "skipped": True}
+
     # Discard known hallucination patterns (subtitle credits, filler phrases)
     _HALLUCINATION_RE = re.compile(
         r"\bsubtitl|\btekst\w*\s+av|undertekster\s+av|\btranscribed\s+by|"
