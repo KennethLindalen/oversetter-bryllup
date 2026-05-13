@@ -1,20 +1,21 @@
 const LANG_NAMES = { en: 'English', no: 'Norsk', ru: 'Русский' };
 
 function initSession(code, initialLang) {
-  const feed = document.getElementById('feed');
-  const ended = document.getElementById('ended');
+  const feed    = document.getElementById('feed');
+  const ended   = document.getElementById('ended');
   const langLabel = document.getElementById('lang-label');
-  const switcher = document.getElementById('lang-switcher');
+  const switcher  = document.getElementById('lang-switcher');
 
   let lang = initialLang;
-  const entries = []; // { translations, original, isInterim }
+  const entries = []; // oldest-first: { translations, original }
+  let interimEl = null;
+  let interimData = null;
 
-  // Populate language switcher
-  Object.entries(LANG_NAMES).forEach(([code, name]) => {
+  Object.entries(LANG_NAMES).forEach(([c, name]) => {
     const opt = document.createElement('option');
-    opt.value = code;
+    opt.value = c;
     opt.textContent = name;
-    if (code === lang) opt.selected = true;
+    if (c === lang) opt.selected = true;
     switcher.appendChild(opt);
   });
 
@@ -32,19 +33,20 @@ function initSession(code, initialLang) {
     }
   });
 
+  // Rebuild feed: prepend oldest-first so newest ends up at the top
   function rerenderAll() {
     feed.innerHTML = '';
-    entries.forEach((entry) => {
-      const el = createEntry(entry.translations, entry.original, entry.isInterim);
-      feed.appendChild(el);
+    entries.forEach(entry => {
+      feed.prepend(createEntry(entry.translations, entry.original, false, false));
     });
-    feed.scrollTop = feed.scrollHeight;
+    if (interimData) {
+      interimEl = createEntry(interimData.translations, interimData.original, true, false);
+      feed.prepend(interimEl);
+    }
   }
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws/${code}/client?lang=${lang}`);
-
-  let interimIndex = null;
 
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
@@ -58,31 +60,24 @@ function initSession(code, initialLang) {
     if (msg.type !== 'transcript') return;
 
     if (!msg.is_final) {
-      if (interimIndex === null) {
-        entries.push({ translations: msg.translations, original: msg.original, isInterim: true });
-        interimIndex = entries.length - 1;
-        feed.appendChild(createEntry(msg.translations, msg.original, true));
+      interimData = { translations: msg.translations, original: msg.original };
+      if (!interimEl) {
+        interimEl = createEntry(msg.translations, msg.original, true, true);
+        feed.prepend(interimEl);
       } else {
-        entries[interimIndex] = { translations: msg.translations, original: msg.original, isInterim: true };
-        const els = feed.querySelectorAll('.transcript-entry');
-        const el = els[interimIndex];
-        if (el) {
-          el.querySelector('.transcript-translated').textContent = msg.translations?.[lang] || msg.original;
-          el.querySelector('.transcript-original').textContent = msg.original;
-        }
+        interimEl.querySelector('.transcript-translated').textContent = msg.translations?.[lang] || msg.original;
+        interimEl.querySelector('.transcript-original').textContent = msg.original;
       }
     } else {
-      if (interimIndex !== null) {
-        entries[interimIndex] = { translations: msg.translations, original: msg.original, isInterim: false };
-        interimIndex = null;
+      entries.push({ translations: msg.translations, original: msg.original });
+      if (interimEl) {
+        interimEl = null;
+        interimData = null;
         rerenderAll();
       } else {
-        entries.push({ translations: msg.translations, original: msg.original, isInterim: false });
-        feed.appendChild(createEntry(msg.translations, msg.original, false));
+        feed.prepend(createEntry(msg.translations, msg.original, false, true));
       }
     }
-
-    feed.scrollTop = feed.scrollHeight;
   };
 
   ws.onclose = () => {
@@ -91,10 +86,14 @@ function initSession(code, initialLang) {
     ended.classList.remove('hidden');
   };
 
-  function createEntry(translations, original, isInterim) {
+  function createEntry(translations, original, isInterim, animate) {
     const translated = translations?.[lang] || original;
     const div = document.createElement('div');
     div.className = 'transcript-entry' + (isInterim ? ' interim' : '');
+    if (animate && !isInterim) {
+      div.classList.add('entry-new');
+      div.addEventListener('animationend', () => div.classList.remove('entry-new'), { once: true });
+    }
     div.innerHTML = `
       <div class="transcript-translated">${escHtml(translated)}</div>
       <div class="transcript-original">${escHtml(original)}</div>

@@ -1,8 +1,11 @@
 let keyphrase = '';
 let sessionCode = '';
 let ws = null;
-let recognition = null;
+let mediaRecorder = null;
 let isRecording = false;
+let recordingStream = null;
+
+const CHUNK_MS = 4000;
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -71,92 +74,93 @@ function connectWs() {
   };
 }
 
-// Maps select value → { source: LT code or "auto", recognitionLang: BCP-47 }
-const LANG_MAP = {
-  'auto':  { source: 'auto', recognitionLang: 'nb-NO' },
-  'en-US': { source: 'en',   recognitionLang: 'en-US' },
-  'nb-NO': { source: 'nb',   recognitionLang: 'nb-NO' },
-  'ru-RU': { source: 'ru',   recognitionLang: 'ru-RU' },
-};
-
-function getLangConfig() {
-  return LANG_MAP[document.getElementById('speech-lang').value] || LANG_MAP['auto'];
-}
-
-function sendTranscript(text, isFinal) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const { source } = getLangConfig();
-  ws.send(JSON.stringify({ type: 'transcript', text, is_final: isFinal, source }));
-}
-
-// ── Speech Recognition ───────────────────────────────────────────────────────
+// ── Recording ────────────────────────────────────────────────────────────────
 
 const micBtn = document.getElementById('mic-btn');
 const micHint = document.getElementById('mic-hint');
 const preview = document.getElementById('preview');
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-if (!SpeechRecognition) {
-  micBtn.disabled = true;
-  micHint.textContent = 'Speech recognition requires Chrome or Edge.';
-}
 
 micBtn.addEventListener('click', () => {
   if (!sessionCode) return;
   isRecording ? stopRecording() : startRecording();
 });
 
-function startRecording() {
-  recognition = new SpeechRecognition();
-  recognition.lang = getLangConfig().recognitionLang;
-  recognition.continuous = true;
-  recognition.interimResults = true;
-
-  recognition.onresult = (event) => {
-    let interim = '';
-    let final = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const text = event.results[i][0].transcript;
-      if (event.results[i].isFinal) {
-        final += text;
-      } else {
-        interim += text;
-      }
-    }
-    if (interim) {
-      preview.textContent = interim;
-      sendTranscript(interim, false);
-    }
-    if (final) {
-      preview.textContent = final;
-      sendTranscript(final, true);
-    }
-  };
-
-  recognition.onend = () => {
-    if (isRecording) recognition.start();
-  };
-
-  recognition.onerror = (e) => {
-    if (e.error === 'not-allowed') {
-      micHint.textContent = 'Microphone access denied.';
-      stopRecording();
-    }
-  };
-
-  recognition.start();
+async function startRecording() {
+  try {
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    micHint.textContent = 'Microphone access denied.';
+    return;
+  }
   isRecording = true;
   micBtn.classList.add('recording');
   micHint.textContent = 'Recording — click to stop';
+  recordCycle();
+}
+
+function recordCycle() {
+  if (!isRecording || !recordingStream) return;
+
+  const chunks = [];
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus'
+    : 'audio/webm';
+
+  const recorder = new MediaRecorder(recordingStream, { mimeType });
+  mediaRecorder = recorder;
+
+  recorder.ondataavailable = (e) => {
+    if (e.data.size > 0) chunks.push(e.data);
+  };
+
+  recorder.onstop = async () => {
+    if (!isRecording) return;
+
+    // Start next cycle immediately so there's no gap while this chunk is uploading
+    recordCycle();
+
+    const blob = new Blob(chunks, { type: mimeType });
+    if (blob.size < 1500) return;
+
+    const lang = document.getElementById('speech-lang').value;
+    const form = new FormData();
+    form.append('audio', blob, 'chunk.webm');
+    form.append('code', sessionCode);
+    form.append('keyphrase', keyphrase);
+    form.append('lang', lang);
+
+    try {
+      const res = await fetch('/api/transcribe', { method: 'POST', body: form });
+      if (res.status === 429) {
+        micHint.textContent = 'Rate limited — speak slower or use longer pauses';
+      } else if (res.status === 404) {
+        stopRecording();
+        micHint.textContent = 'Session lost — please end and restart the session';
+      } else if (res.ok) {
+        const data = await res.json();
+        if (data.text) preview.textContent = data.text;
+      }
+    } catch (err) {
+      console.error('Transcription error:', err);
+    }
+  };
+
+  recorder.start();
+  setTimeout(() => {
+    if (recorder.state === 'recording') recorder.stop();
+  }, CHUNK_MS);
 }
 
 function stopRecording() {
-  if (recognition) {
-    recognition.onend = null;
-    recognition.stop();
-    recognition = null;
-  }
   isRecording = false;
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+  }
+  if (recordingStream) {
+    recordingStream.getTracks().forEach(t => t.stop());
+    recordingStream = null;
+  }
+  mediaRecorder = null;
   micBtn.classList.remove('recording');
   micHint.textContent = 'Click to start microphone';
 }

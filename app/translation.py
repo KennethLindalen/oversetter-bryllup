@@ -6,11 +6,12 @@ from collections import OrderedDict
 import httpx
 
 logger = logging.getLogger(__name__)
-SUPPORTED_LANGS = ["en", "nb", "ru"]
+
+DEEPL_SOURCE = {"en": "EN", "no": "NB", "ru": "RU"}
+DEEPL_TARGET = {"en": "EN-US", "no": "NB", "ru": "RU"}
 
 _client: httpx.AsyncClient | None = None
 
-# LRU translation cache — keyed by (text, source, target)
 _cache: OrderedDict[tuple, str] = OrderedDict()
 _CACHE_MAX = 500
 
@@ -44,83 +45,49 @@ async def close_client():
         await _client.aclose()
 
 
-async def _translate_one(text: str, source: str, target: str) -> tuple[str, str]:
-    cached = _cache_get(text, source, target)
-    if cached is not None:
-        return target, cached
-
-    url = os.getenv("LIBRETRANSLATE_URL", "http://libretranslate:5000").rstrip("/")
-    api_key = os.getenv("LIBRETRANSLATE_API_KEY", "")
-    payload = {"q": text, "source": source, "target": target, "format": "text"}
-    if api_key:
-        payload["api_key"] = api_key
-    try:
-        resp = await get_client().post(f"{url}/translate", json=payload)
-        resp.raise_for_status()
-        result = resp.json().get("translatedText", text)
-        if result != text:
-            _cache_set(text, source, target, result)
-        return target, result
-    except Exception as e:
-        logger.error("Translation failed %s→%s: %s", source, target, e)
-        return target, text
-
-
-async def detect_language(text: str) -> str:
-    """Returns a LibreTranslate language code (en, nb, ru, ...). Falls back to 'nb'."""
-    url = os.getenv("LIBRETRANSLATE_URL", "http://libretranslate:5000").rstrip("/")
-    api_key = os.getenv("LIBRETRANSLATE_API_KEY", "")
-    payload = {"q": text}
-    if api_key:
-        payload["api_key"] = api_key
-    try:
-        resp = await get_client().post(f"{url}/detect", json=payload)
-        resp.raise_for_status()
-        results = resp.json()
-        if results:
-            return results[0]["language"]
-    except Exception as e:
-        logger.error("Language detection failed: %s", e)
-    return "nb"
-
-
 async def prewarm() -> None:
-    """Translate a short dummy phrase so the models are hot before any real request."""
+    pass
+
+
+def _deepl_base() -> str:
+    key = os.getenv("DEEPL_API_KEY", "")
+    return "https://api-free.deepl.com" if key.endswith(":fx") else "https://api.deepl.com"
+
+
+async def _translate_one(text: str, source: str, target_key: str) -> tuple[str, str]:
+    cached = _cache_get(text, source, target_key)
+    if cached is not None:
+        return target_key, cached
+
+    api_key = os.getenv("DEEPL_API_KEY", "")
+    source_code = DEEPL_SOURCE.get(source, "EN")
+    target_code = DEEPL_TARGET.get(target_key, "EN-US")
     try:
-        await translate_all("hello", source="en", needed={"no", "ru"})
-        logger.info("LibreTranslate prewarm complete")
+        resp = await get_client().post(
+            f"{_deepl_base()}/v2/translate",
+            headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+            json={"text": [text], "source_lang": source_code, "target_lang": target_code},
+        )
+        resp.raise_for_status()
+        result = resp.json()["translations"][0]["text"]
+        _cache_set(text, source, target_key, result)
+        return target_key, result
     except Exception as e:
-        logger.warning("LibreTranslate prewarm failed: %s", e)
+        logger.error("DeepL translation failed %s->%s: %s", source, target_key, e)
+        return target_key, text
 
 
-async def translate_all(text: str, source: str = "auto", needed: set[str] | None = None) -> dict[str, str]:
-    """Translate text into needed languages. `needed` uses output keys: en, no, ru.
-    Pass source='auto' to detect the language automatically."""
-    if source == "auto":
-        source = await detect_language(text)
-
-    lt_source = source  # LibreTranslate code (en/nb/ru)
-
-    # Map output keys to LibreTranslate target codes
-    key_to_lt = {"en": "en", "no": "nb", "ru": "ru"}
-    lt_to_key = {"en": "en", "nb": "no", "ru": "ru"}
-    source_output_key = lt_to_key.get(source, source)
-
+async def translate_all(text: str, source: str = "en", needed: set[str] | None = None) -> dict[str, str]:
     if needed is None:
         needed = {"en", "no", "ru"}
 
-    targets = [
-        key_to_lt[k] for k in needed
-        if k != source_output_key and k in key_to_lt
-    ]
+    targets = [k for k in needed if k != source and k in DEEPL_TARGET]
+    results = await asyncio.gather(*[_translate_one(text, source, t) for t in targets])
 
-    results = await asyncio.gather(*[_translate_one(text, lt_source, t) for t in targets])
+    translations: dict[str, str] = {source: text}
+    for key, translated in results:
+        translations[key] = translated
 
-    translations: dict[str, str] = {source_output_key: text}
-    for lt_code, translated in results:
-        translations[lt_to_key[lt_code]] = translated
-
-    # Fill any remaining keys with original text as fallback
     for key in ("en", "no", "ru"):
         translations.setdefault(key, text)
 

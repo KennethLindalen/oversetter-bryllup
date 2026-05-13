@@ -1,13 +1,16 @@
 import asyncio
 import os
+import re
 import time
 import uuid
 from pathlib import Path
 
+import httpx
+
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, UploadFile, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -113,6 +116,90 @@ async def session_end(request: Request):
         await store.broadcast_all(code, {"type": "session_end"})
         store.remove(code)
     return {"ok": True}
+
+
+# ── Transcription ────────────────────────────────────────────────────────────
+
+WHISPER_LANG = {"en": "en", "no": "no", "nb": "no", "ru": "ru"}
+
+
+@app.post("/api/transcribe")
+async def transcribe(
+    audio: UploadFile,
+    code: str = Form(...),
+    keyphrase: str = Form(...),
+    lang: str = Form("no"),
+):
+    if keyphrase != os.getenv("ADMIN_KEYPHRASE", ""):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    session = store.get(code.upper())
+    if not session or not session.active:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    audio_bytes = await audio.read()
+    if len(audio_bytes) < 1500:
+        return {"ok": True, "skipped": True}
+
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    if not openai_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {openai_key}"},
+            files={"file": ("audio.webm", audio_bytes, "audio/webm")},
+            data={
+                "model": "whisper-1",
+                "language": WHISPER_LANG.get(lang, "no"),
+                "response_format": "verbose_json",
+            },
+        )
+        if resp.status_code == 429:
+            raise HTTPException(status_code=429, detail="OpenAI rate limit — speak in longer chunks or wait a moment")
+        resp.raise_for_status()
+        body = resp.json()
+
+    text = body.get("text", "").strip()
+    if not text:
+        return {"ok": True, "skipped": True}
+
+    # Discard chunks that are almost certainly silence/noise
+    segments = body.get("segments", [])
+    if segments:
+        avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
+        if avg_no_speech > 0.7:
+            return {"ok": True, "skipped": True}
+
+    # Discard chunks where Whisper transcribed in a different language than expected
+    # (cross-language output is almost always a hallucination)
+    LANG_BASES = {"en": "english", "no": "norwegian", "ru": "russian"}
+    expected_base = LANG_BASES.get(lang)
+    detected_lang = body.get("language", "").lower()
+    if expected_base and detected_lang and expected_base not in detected_lang:
+        return {"ok": True, "skipped": True}
+
+    # Discard known hallucination patterns (subtitle credits, filler phrases)
+    _HALLUCINATION_RE = re.compile(
+        r"\bsubtitl|\btekst\w*\s+av|undertekster\s+av|\btranscribed\s+by|"
+        r"ai.?media|\bcaptioned\s+by|thank\s+you\s+for\s+(watching|listening)|"
+        r"takk\s+for\s+at\s+du",
+        re.IGNORECASE,
+    )
+    if _HALLUCINATION_RE.search(text):
+        return {"ok": True, "skipped": True}
+
+    translations = await translate_all(text, source=lang, needed=session.needed_langs())
+
+    await store.broadcast(code.upper(), {
+        "type": "transcript",
+        "original": text,
+        "translations": translations,
+        "is_final": True,
+    })
+
+    return {"ok": True, "text": text}
 
 
 # ── WebSocket ────────────────────────────────────────────────────────────────

@@ -12,8 +12,7 @@ if [ ! -f ".env" ]; then
 fi
 
 echo ""
-echo "Starting with Docker Compose (includes LibreTranslate)..."
-echo "First run will download translation models (~500 MB) — this takes a few minutes."
+echo "Starting..."
 echo ""
 echo "  Admin: http://localhost:8000/admin"
 echo "  Users: http://localhost:8000/join"
