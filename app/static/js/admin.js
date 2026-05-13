@@ -3,6 +3,7 @@ let sessionCode = '';
 let ws = null;
 let mediaRecorder = null;
 let isRecording = false;
+let recordingStream = null;
 
 const CHUNK_MS = 10000;
 
@@ -85,56 +86,81 @@ micBtn.addEventListener('click', () => {
 });
 
 async function startRecording() {
-  let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch {
     micHint.textContent = 'Microphone access denied.';
     return;
   }
-
-  mediaRecorder = new MediaRecorder(stream);
-
-  mediaRecorder.ondataavailable = async (e) => {
-    if (e.data.size < 1500) return;
-    const lang = document.getElementById('speech-lang').value;
-
-    micHint.textContent = 'Processing…';
-
-    const form = new FormData();
-    form.append('audio', e.data, 'chunk.webm');
-    form.append('code', sessionCode);
-    form.append('keyphrase', keyphrase);
-    form.append('lang', lang);
-
-    try {
-      const res = await fetch('/api/transcribe', { method: 'POST', body: form });
-      if (res.status === 429) {
-        micHint.textContent = 'Rate limited — speak slower or use longer pauses';
-      } else if (res.ok) {
-        const data = await res.json();
-        if (data.text) preview.textContent = data.text;
-      }
-    } catch (err) {
-      console.error('Transcription error:', err);
-    }
-
-    if (isRecording) micHint.textContent = 'Recording — click to stop';
-  };
-
-  mediaRecorder.start(CHUNK_MS);
   isRecording = true;
   micBtn.classList.add('recording');
   micHint.textContent = 'Recording — click to stop';
+  recordCycle();
+}
+
+function recordCycle() {
+  if (!isRecording || !recordingStream) return;
+
+  const chunks = [];
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus'
+    : 'audio/webm';
+
+  const recorder = new MediaRecorder(recordingStream, { mimeType });
+  mediaRecorder = recorder;
+
+  recorder.ondataavailable = (e) => {
+    if (e.data.size > 0) chunks.push(e.data);
+  };
+
+  recorder.onstop = async () => {
+    if (!isRecording) return;
+
+    const blob = new Blob(chunks, { type: mimeType });
+    if (blob.size >= 1500) {
+      micHint.textContent = 'Processing…';
+      const lang = document.getElementById('speech-lang').value;
+      const form = new FormData();
+      form.append('audio', blob, 'chunk.webm');
+      form.append('code', sessionCode);
+      form.append('keyphrase', keyphrase);
+      form.append('lang', lang);
+
+      try {
+        const res = await fetch('/api/transcribe', { method: 'POST', body: form });
+        if (res.status === 429) {
+          micHint.textContent = 'Rate limited — speak slower or use longer pauses';
+        } else if (res.ok) {
+          const data = await res.json();
+          if (data.text) preview.textContent = data.text;
+        }
+      } catch (err) {
+        console.error('Transcription error:', err);
+      }
+    }
+
+    if (isRecording) {
+      micHint.textContent = 'Recording — click to stop';
+      recordCycle();
+    }
+  };
+
+  recorder.start();
+  setTimeout(() => {
+    if (recorder.state === 'recording') recorder.stop();
+  }, CHUNK_MS);
 }
 
 function stopRecording() {
-  if (mediaRecorder) {
-    mediaRecorder.stream.getTracks().forEach(t => t.stop());
-    mediaRecorder.stop();
-    mediaRecorder = null;
-  }
   isRecording = false;
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+  }
+  if (recordingStream) {
+    recordingStream.getTracks().forEach(t => t.stop());
+    recordingStream = null;
+  }
+  mediaRecorder = null;
   micBtn.classList.remove('recording');
   micHint.textContent = 'Click to start microphone';
 }
