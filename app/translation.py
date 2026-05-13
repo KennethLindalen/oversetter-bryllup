@@ -4,7 +4,11 @@ import os
 import httpx
 
 logger = logging.getLogger(__name__)
-SUPPORTED_LANGS = ["en", "nb", "ru"]
+
+# DeepL uses different codes for source vs target
+DEEPL_SOURCE = {"en": "EN", "no": "NB", "ru": "RU"}
+DEEPL_TARGET = {"en": "EN-US", "no": "NB", "ru": "RU"}
+DEEPL_TO_KEY = {"EN-US": "en", "NB": "no", "RU": "ru"}
 
 _client: httpx.AsyncClient | None = None
 
@@ -22,45 +26,39 @@ async def close_client():
         await _client.aclose()
 
 
-async def _translate_one(text: str, source: str, target: str) -> tuple[str, str]:
-    url = os.getenv("LIBRETRANSLATE_URL", "http://libretranslate:5000").rstrip("/")
-    api_key = os.getenv("LIBRETRANSLATE_API_KEY", "")
-    payload = {"q": text, "source": source, "target": target, "format": "text"}
-    if api_key:
-        payload["api_key"] = api_key
+def _deepl_base() -> str:
+    key = os.getenv("DEEPL_API_KEY", "")
+    return "https://api-free.deepl.com" if key.endswith(":fx") else "https://api.deepl.com"
+
+
+async def _translate_one(text: str, source: str, target_key: str) -> tuple[str, str]:
+    api_key = os.getenv("DEEPL_API_KEY", "")
+    source_code = DEEPL_SOURCE.get(source, "EN")
+    target_code = DEEPL_TARGET.get(target_key, "EN-US")
     try:
-        resp = await get_client().post(f"{url}/translate", json=payload)
+        resp = await get_client().post(
+            f"{_deepl_base()}/v2/translate",
+            headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+            json={"text": [text], "source_lang": source_code, "target_lang": target_code},
+        )
         resp.raise_for_status()
-        return target, resp.json().get("translatedText", text)
+        return target_key, resp.json()["translations"][0]["text"]
     except Exception as e:
-        logger.error("Translation failed %s→%s: %s", source, target, e)
-        return target, text
+        logger.error("DeepL translation failed %s→%s: %s", source, target_key, e)
+        return target_key, text
 
 
 async def translate_all(text: str, source: str = "en", needed: set[str] | None = None) -> dict[str, str]:
-    """Translate text into needed languages. `needed` uses output keys: en, no, ru."""
-    lt_source = source  # source is already a LibreTranslate code (en/nb/ru)
-
-    # Map output keys to LibreTranslate target codes
-    key_to_lt = {"en": "en", "no": "nb", "ru": "ru"}
-    lt_to_key = {"en": "en", "nb": "no", "ru": "ru"}
-    source_output_key = lt_to_key.get(source, source)
-
     if needed is None:
         needed = {"en", "no", "ru"}
 
-    targets = [
-        key_to_lt[k] for k in needed
-        if k != source_output_key and k in key_to_lt
-    ]
+    targets = [k for k in needed if k != source and k in DEEPL_TARGET]
+    results = await asyncio.gather(*[_translate_one(text, source, t) for t in targets])
 
-    results = await asyncio.gather(*[_translate_one(text, lt_source, t) for t in targets])
+    translations: dict[str, str] = {source: text}
+    for key, translated in results:
+        translations[key] = translated
 
-    translations: dict[str, str] = {source_output_key: text}
-    for lt_code, translated in results:
-        translations[lt_to_key[lt_code]] = translated
-
-    # Fill any remaining keys with original text as fallback
     for key in ("en", "no", "ru"):
         translations.setdefault(key, text)
 

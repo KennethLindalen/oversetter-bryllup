@@ -1,8 +1,10 @@
 let keyphrase = '';
 let sessionCode = '';
 let ws = null;
-let recognition = null;
+let mediaRecorder = null;
 let isRecording = false;
+
+const CHUNK_MS = 3000;
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -71,81 +73,62 @@ function connectWs() {
   };
 }
 
-const LANG_MAP = { 'en-US': 'en', 'nb-NO': 'nb', 'ru-RU': 'ru' };
-
-function sendTranscript(text, isFinal) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const bcp47 = document.getElementById('speech-lang').value;
-  const source = LANG_MAP[bcp47] || 'en';
-  ws.send(JSON.stringify({ type: 'transcript', text, is_final: isFinal, source }));
-}
-
-// ── Speech Recognition ───────────────────────────────────────────────────────
+// ── Recording ────────────────────────────────────────────────────────────────
 
 const micBtn = document.getElementById('mic-btn');
 const micHint = document.getElementById('mic-hint');
 const preview = document.getElementById('preview');
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-if (!SpeechRecognition) {
-  micBtn.disabled = true;
-  micHint.textContent = 'Speech recognition requires Chrome or Edge.';
-}
 
 micBtn.addEventListener('click', () => {
   if (!sessionCode) return;
   isRecording ? stopRecording() : startRecording();
 });
 
-function startRecording() {
-  recognition = new SpeechRecognition();
-  recognition.lang = document.getElementById('speech-lang').value;
-  recognition.continuous = true;
-  recognition.interimResults = true;
+async function startRecording() {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    micHint.textContent = 'Microphone access denied.';
+    return;
+  }
 
-  recognition.onresult = (event) => {
-    let interim = '';
-    let final = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const text = event.results[i][0].transcript;
-      if (event.results[i].isFinal) {
-        final += text;
-      } else {
-        interim += text;
-      }
+  mediaRecorder = new MediaRecorder(stream);
+
+  mediaRecorder.ondataavailable = async (e) => {
+    if (e.data.size < 1500) return;
+    const lang = document.getElementById('speech-lang').value;
+
+    micHint.textContent = 'Processing…';
+
+    const form = new FormData();
+    form.append('audio', e.data, 'chunk.webm');
+    form.append('code', sessionCode);
+    form.append('keyphrase', keyphrase);
+    form.append('lang', lang);
+
+    try {
+      const res = await fetch('/api/transcribe', { method: 'POST', body: form });
+      const data = await res.json();
+      if (data.text) preview.textContent = data.text;
+    } catch (err) {
+      console.error('Transcription error:', err);
     }
-    if (interim) {
-      preview.textContent = interim;
-      sendTranscript(interim, false);
-    }
-    if (final) {
-      preview.textContent = final;
-      sendTranscript(final, true);
-    }
+
+    if (isRecording) micHint.textContent = 'Recording — click to stop';
   };
 
-  recognition.onend = () => {
-    if (isRecording) recognition.start();
-  };
-
-  recognition.onerror = (e) => {
-    if (e.error === 'not-allowed') {
-      micHint.textContent = 'Microphone access denied.';
-      stopRecording();
-    }
-  };
-
-  recognition.start();
+  mediaRecorder.start(CHUNK_MS);
   isRecording = true;
   micBtn.classList.add('recording');
   micHint.textContent = 'Recording — click to stop';
 }
 
 function stopRecording() {
-  if (recognition) {
-    recognition.onend = null;
-    recognition.stop();
-    recognition = null;
+  if (mediaRecorder) {
+    mediaRecorder.stream.getTracks().forEach(t => t.stop());
+    mediaRecorder.stop();
+    mediaRecorder = null;
   }
   isRecording = false;
   micBtn.classList.remove('recording');

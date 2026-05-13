@@ -3,10 +3,12 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx
+
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, UploadFile, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -111,6 +113,59 @@ async def session_end(request: Request):
         await store.broadcast_all(code, {"type": "session_end"})
         store.remove(code)
     return {"ok": True}
+
+
+# ── Transcription ────────────────────────────────────────────────────────────
+
+WHISPER_LANG = {"en": "en", "no": "no", "nb": "no", "ru": "ru"}
+
+
+@app.post("/api/transcribe")
+async def transcribe(
+    audio: UploadFile,
+    code: str = Form(...),
+    keyphrase: str = Form(...),
+    lang: str = Form("no"),
+):
+    if keyphrase != os.getenv("ADMIN_KEYPHRASE", ""):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    session = store.get(code.upper())
+    if not session or not session.active:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    audio_bytes = await audio.read()
+    if len(audio_bytes) < 1500:
+        return {"ok": True, "skipped": True}
+
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    if not openai_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {openai_key}"},
+            files={"file": ("audio.webm", audio_bytes, "audio/webm")},
+            data={"model": "whisper-1", "language": WHISPER_LANG.get(lang, "no")},
+        )
+        resp.raise_for_status()
+        text = resp.json().get("text", "").strip()
+
+    if not text:
+        return {"ok": True, "skipped": True}
+
+    source_key = "no" if lang in ("no", "nb") else lang
+    translations = await translate_all(text, source=source_key, needed=session.needed_langs())
+
+    await store.broadcast(code.upper(), {
+        "type": "transcript",
+        "original": text,
+        "translations": translations,
+        "is_final": True,
+    })
+
+    return {"ok": True, "text": text}
 
 
 # ── WebSocket ────────────────────────────────────────────────────────────────
