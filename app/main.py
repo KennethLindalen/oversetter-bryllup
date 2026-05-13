@@ -172,7 +172,7 @@ async def transcribe(
 
     # Discard known hallucination patterns (subtitle credits, filler phrases)
     _HALLUCINATION_RE = re.compile(
-        r"\bsubtitl|\bteksting\b|undertekster\s+av|\btranscribed\s+by|"
+        r"\bsubtitl|\btekst\w*\s+av|undertekster\s+av|\btranscribed\s+by|"
         r"ai.?media|\bcaptioned\s+by|thank\s+you\s+for\s+(watching|listening)|"
         r"takk\s+for\s+at\s+du",
         re.IGNORECASE,
