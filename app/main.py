@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -151,6 +152,8 @@ async def transcribe(
                 "model": "whisper-1",
                 "language": WHISPER_LANG.get(lang, "no"),
                 "response_format": "verbose_json",
+                # Anchors Whisper to prose mode; prevents subtitle-credit hallucinations
+                "prompt": ".",
             },
         )
         if resp.status_code == 429:
@@ -166,8 +169,18 @@ async def transcribe(
     segments = body.get("segments", [])
     if segments:
         avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
-        if avg_no_speech > 0.6:
+        if avg_no_speech > 0.4:
             return {"ok": True, "skipped": True}
+
+    # Discard known hallucination patterns (subtitle credits, filler phrases)
+    _HALLUCINATION_RE = re.compile(
+        r"subtitles?\s+by|teksting\s+av|undertekster\s+av|transcribed\s+by|"
+        r"ai.?media|thank\s+you\s+for\s+(watching|listening)|"
+        r"takk\s+for\s+at\s+du",
+        re.IGNORECASE,
+    )
+    if _HALLUCINATION_RE.search(text):
+        return {"ok": True, "skipped": True}
 
     translations = await translate_all(text, source=lang, needed=session.needed_langs())
 
