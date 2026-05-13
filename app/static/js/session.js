@@ -27,6 +27,9 @@ function initSession(code, initialLang) {
     lang = switcher.value;
     updateLangLabel();
     rerenderAll();
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'set_lang', lang }));
+    }
   });
 
   function rerenderAll() {
@@ -39,7 +42,7 @@ function initSession(code, initialLang) {
   }
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/ws/${code}/client`);
+  const ws = new WebSocket(`${proto}://${location.host}/ws/${code}/client?lang=${lang}`);
 
   let interimIndex = null;
 

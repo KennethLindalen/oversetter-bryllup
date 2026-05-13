@@ -3,6 +3,8 @@ import time
 import uuid
 from pathlib import Path
 
+from contextlib import asynccontextmanager
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
@@ -11,11 +13,18 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .session import store
-from .translation import translate_all
+from .translation import translate_all, close_client
 
 load_dotenv()
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await close_client()
+
+
+app = FastAPI(lifespan=lifespan)
 BUILD_ID = str(int(time.time()))
 
 BASE_DIR = Path(__file__).parent
@@ -107,7 +116,7 @@ async def session_end(request: Request):
 # ── WebSocket ────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws/{code}/{role}")
-async def websocket_endpoint(websocket: WebSocket, code: str, role: str):
+async def websocket_endpoint(websocket: WebSocket, code: str, role: str, lang: str = "en"):
     code = code.upper()
     session = store.get(code)
     if not session or not session.active:
@@ -121,6 +130,7 @@ async def websocket_endpoint(websocket: WebSocket, code: str, role: str):
         session.admin_ws = websocket
     else:
         session.clients[client_id] = websocket
+        session.client_langs[client_id] = lang
         await store.broadcast_all(code, {"type": "user_count", "count": store.user_count(code)})
 
     try:
@@ -128,7 +138,10 @@ async def websocket_endpoint(websocket: WebSocket, code: str, role: str):
             data = await websocket.receive_json()
             msg_type = data.get("type")
 
-            if msg_type == "transcript" and role == "admin":
+            if msg_type == "set_lang" and role != "admin":
+                session.client_langs[client_id] = data.get("lang", "en")
+
+            elif msg_type == "transcript" and role == "admin":
                 text = data.get("text", "").strip()
                 is_final = data.get("is_final", False)
                 if not text:
@@ -136,7 +149,9 @@ async def websocket_endpoint(websocket: WebSocket, code: str, role: str):
 
                 source_lang = data.get("source", "en")
                 if is_final:
-                    translations = await translate_all(text, source=source_lang)
+                    translations = await translate_all(
+                        text, source=source_lang, needed=session.needed_langs()
+                    )
                 else:
                     translations = {"en": text, "no": text, "ru": text}
 
@@ -154,5 +169,6 @@ async def websocket_endpoint(websocket: WebSocket, code: str, role: str):
             session.admin_ws = None
         else:
             session.clients.pop(client_id, None)
+            session.client_langs.pop(client_id, None)
             if session.active:
                 await store.broadcast_all(code, {"type": "user_count", "count": store.user_count(code)})
