@@ -157,8 +157,7 @@ async def transcribe(
     if not text:
         return {"ok": True, "skipped": True}
 
-    source_key = "no" if lang in ("no", "nb") else lang
-    translations = await translate_all(text, source=source_key, needed=session.needed_langs())
+    translations = await translate_all(text, source=lang, needed=session.needed_langs())
 
     await store.broadcast(code.upper(), {
         "type": "transcript",
