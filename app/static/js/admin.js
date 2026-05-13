@@ -5,7 +5,7 @@ let mediaRecorder = null;
 let isRecording = false;
 let recordingStream = null;
 
-const CHUNK_MS = 10000;
+const CHUNK_MS = 5000;
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
