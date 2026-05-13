@@ -1,16 +1,35 @@
 import asyncio
 import logging
 import os
+from collections import OrderedDict
+
 import httpx
 
 logger = logging.getLogger(__name__)
 
-# DeepL uses different codes for source vs target
 DEEPL_SOURCE = {"en": "EN", "no": "NB", "ru": "RU"}
 DEEPL_TARGET = {"en": "EN-US", "no": "NB", "ru": "RU"}
-DEEPL_TO_KEY = {"EN-US": "en", "NB": "no", "RU": "ru"}
 
 _client: httpx.AsyncClient | None = None
+
+_cache: OrderedDict[tuple, str] = OrderedDict()
+_CACHE_MAX = 500
+
+
+def _cache_get(text: str, source: str, target: str) -> str | None:
+    key = (text, source, target)
+    if key in _cache:
+        _cache.move_to_end(key)
+        return _cache[key]
+    return None
+
+
+def _cache_set(text: str, source: str, target: str, value: str) -> None:
+    key = (text, source, target)
+    _cache[key] = value
+    _cache.move_to_end(key)
+    if len(_cache) > _CACHE_MAX:
+        _cache.popitem(last=False)
 
 
 def get_client() -> httpx.AsyncClient:
@@ -26,12 +45,20 @@ async def close_client():
         await _client.aclose()
 
 
+async def prewarm() -> None:
+    pass
+
+
 def _deepl_base() -> str:
     key = os.getenv("DEEPL_API_KEY", "")
     return "https://api-free.deepl.com" if key.endswith(":fx") else "https://api.deepl.com"
 
 
 async def _translate_one(text: str, source: str, target_key: str) -> tuple[str, str]:
+    cached = _cache_get(text, source, target_key)
+    if cached is not None:
+        return target_key, cached
+
     api_key = os.getenv("DEEPL_API_KEY", "")
     source_code = DEEPL_SOURCE.get(source, "EN")
     target_code = DEEPL_TARGET.get(target_key, "EN-US")
@@ -42,9 +69,11 @@ async def _translate_one(text: str, source: str, target_key: str) -> tuple[str, 
             json={"text": [text], "source_lang": source_code, "target_lang": target_code},
         )
         resp.raise_for_status()
-        return target_key, resp.json()["translations"][0]["text"]
+        result = resp.json()["translations"][0]["text"]
+        _cache_set(text, source, target_key, result)
+        return target_key, result
     except Exception as e:
-        logger.error("DeepL translation failed %s→%s: %s", source, target_key, e)
+        logger.error("DeepL translation failed %s->%s: %s", source, target_key, e)
         return target_key, text
 
 
