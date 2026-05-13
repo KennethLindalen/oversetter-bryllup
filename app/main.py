@@ -147,15 +147,27 @@ async def transcribe(
             "https://api.openai.com/v1/audio/transcriptions",
             headers={"Authorization": f"Bearer {openai_key}"},
             files={"file": ("audio.webm", audio_bytes, "audio/webm")},
-            data={"model": "whisper-1", "language": WHISPER_LANG.get(lang, "no")},
+            data={
+                "model": "whisper-1",
+                "language": WHISPER_LANG.get(lang, "no"),
+                "response_format": "verbose_json",
+            },
         )
         if resp.status_code == 429:
             raise HTTPException(status_code=429, detail="OpenAI rate limit — speak in longer chunks or wait a moment")
         resp.raise_for_status()
-        text = resp.json().get("text", "").strip()
+        body = resp.json()
 
+    text = body.get("text", "").strip()
     if not text:
         return {"ok": True, "skipped": True}
+
+    # Discard chunks where Whisper itself doubts speech was present
+    segments = body.get("segments", [])
+    if segments:
+        avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
+        if avg_no_speech > 0.6:
+            return {"ok": True, "skipped": True}
 
     translations = await translate_all(text, source=lang, needed=session.needed_langs())
 
