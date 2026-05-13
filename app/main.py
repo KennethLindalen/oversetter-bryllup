@@ -165,12 +165,11 @@ async def transcribe(
     if not text:
         return {"ok": True, "skipped": True}
 
-    # Discard chunks where Whisper itself doubts speech was present
+    # Discard chunks that are almost certainly silence/noise
     segments = body.get("segments", [])
     if segments:
         avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
-        avg_logprob = sum(s.get("avg_logprob", 0) for s in segments) / len(segments)
-        if avg_no_speech > 0.4 or avg_logprob < -1.0:
+        if avg_no_speech > 0.7:
             return {"ok": True, "skipped": True}
 
     # Discard known hallucination patterns (subtitle credits, filler phrases)
