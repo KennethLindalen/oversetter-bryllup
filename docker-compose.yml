@@ -15,6 +15,7 @@ services:
     environment:
       - LT_LOAD_ONLY=en,nb,ru
       - LT_UPDATE_MODELS=true
+      - LT_WORKERS=8
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/languages')\" 2>/dev/null || exit 1"]
       interval: 10s

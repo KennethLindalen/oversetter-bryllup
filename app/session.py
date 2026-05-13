@@ -10,7 +10,11 @@ class Session:
     code: str
     admin_ws: WebSocket | None = None
     clients: dict[str, WebSocket] = field(default_factory=dict)
+    client_langs: dict[str, str] = field(default_factory=dict)  # client_id → lang
     active: bool = True
+
+    def needed_langs(self) -> set[str]:
+        return set(self.client_langs.values()) or {"en", "no", "ru"}
 
 
 class SessionStore:
