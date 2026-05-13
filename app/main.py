@@ -152,8 +152,6 @@ async def transcribe(
                 "model": "whisper-1",
                 "language": WHISPER_LANG.get(lang, "no"),
                 "response_format": "verbose_json",
-                # Anchors Whisper to prose mode; prevents subtitle-credit hallucinations
-                "prompt": ".",
             },
         )
         if resp.status_code == 429:
