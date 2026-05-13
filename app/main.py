@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 from pathlib import Path
 
@@ -15,10 +16,12 @@ from .translation import translate_all
 load_dotenv()
 
 app = FastAPI()
+BUILD_ID = str(int(time.time()))
 
 BASE_DIR = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+templates.env.globals["build_id"] = BUILD_ID
 
 
 class IframeHeadersMiddleware(BaseHTTPMiddleware):
