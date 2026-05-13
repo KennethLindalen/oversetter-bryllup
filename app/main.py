@@ -149,6 +149,8 @@ async def transcribe(
             files={"file": ("audio.webm", audio_bytes, "audio/webm")},
             data={"model": "whisper-1", "language": WHISPER_LANG.get(lang, "no")},
         )
+        if resp.status_code == 429:
+            raise HTTPException(status_code=429, detail="OpenAI rate limit — speak in longer chunks or wait a moment")
         resp.raise_for_status()
         text = resp.json().get("text", "").strip()
 

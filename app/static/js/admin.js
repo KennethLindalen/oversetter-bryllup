@@ -4,7 +4,7 @@ let ws = null;
 let mediaRecorder = null;
 let isRecording = false;
 
-const CHUNK_MS = 3000;
+const CHUNK_MS = 10000;
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -109,8 +109,12 @@ async function startRecording() {
 
     try {
       const res = await fetch('/api/transcribe', { method: 'POST', body: form });
-      const data = await res.json();
-      if (data.text) preview.textContent = data.text;
+      if (res.status === 429) {
+        micHint.textContent = 'Rate limited — speak slower or use longer pauses';
+      } else if (res.ok) {
+        const data = await res.json();
+        if (data.text) preview.textContent = data.text;
+      }
     } catch (err) {
       console.error('Transcription error:', err);
     }
