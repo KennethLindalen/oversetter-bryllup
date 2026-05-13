@@ -169,13 +169,14 @@ async def transcribe(
     segments = body.get("segments", [])
     if segments:
         avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
-        if avg_no_speech > 0.4:
+        avg_logprob = sum(s.get("avg_logprob", 0) for s in segments) / len(segments)
+        if avg_no_speech > 0.4 or avg_logprob < -1.0:
             return {"ok": True, "skipped": True}
 
     # Discard known hallucination patterns (subtitle credits, filler phrases)
     _HALLUCINATION_RE = re.compile(
-        r"subtitles?\s+by|teksting\s+av|undertekster\s+av|transcribed\s+by|"
-        r"ai.?media|thank\s+you\s+for\s+(watching|listening)|"
+        r"\bsubtitl|\bteksting\b|undertekster\s+av|\btranscribed\s+by|"
+        r"ai.?media|\bcaptioned\s+by|thank\s+you\s+for\s+(watching|listening)|"
         r"takk\s+for\s+at\s+du",
         re.IGNORECASE,
     )
