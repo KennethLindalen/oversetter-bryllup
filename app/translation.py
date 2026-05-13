@@ -1,12 +1,34 @@
 import asyncio
 import logging
 import os
+from collections import OrderedDict
+
 import httpx
 
 logger = logging.getLogger(__name__)
 SUPPORTED_LANGS = ["en", "nb", "ru"]
 
 _client: httpx.AsyncClient | None = None
+
+# LRU translation cache — keyed by (text, source, target)
+_cache: OrderedDict[tuple, str] = OrderedDict()
+_CACHE_MAX = 500
+
+
+def _cache_get(text: str, source: str, target: str) -> str | None:
+    key = (text, source, target)
+    if key in _cache:
+        _cache.move_to_end(key)
+        return _cache[key]
+    return None
+
+
+def _cache_set(text: str, source: str, target: str, value: str) -> None:
+    key = (text, source, target)
+    _cache[key] = value
+    _cache.move_to_end(key)
+    if len(_cache) > _CACHE_MAX:
+        _cache.popitem(last=False)
 
 
 def get_client() -> httpx.AsyncClient:
@@ -23,6 +45,10 @@ async def close_client():
 
 
 async def _translate_one(text: str, source: str, target: str) -> tuple[str, str]:
+    cached = _cache_get(text, source, target)
+    if cached is not None:
+        return target, cached
+
     url = os.getenv("LIBRETRANSLATE_URL", "http://libretranslate:5000").rstrip("/")
     api_key = os.getenv("LIBRETRANSLATE_API_KEY", "")
     payload = {"q": text, "source": source, "target": target, "format": "text"}
@@ -31,10 +57,22 @@ async def _translate_one(text: str, source: str, target: str) -> tuple[str, str]
     try:
         resp = await get_client().post(f"{url}/translate", json=payload)
         resp.raise_for_status()
-        return target, resp.json().get("translatedText", text)
+        result = resp.json().get("translatedText", text)
+        if result != text:
+            _cache_set(text, source, target, result)
+        return target, result
     except Exception as e:
         logger.error("Translation failed %s→%s: %s", source, target, e)
         return target, text
+
+
+async def prewarm() -> None:
+    """Translate a short dummy phrase so the models are hot before any real request."""
+    try:
+        await translate_all("hello", source="en", needed={"no", "ru"})
+        logger.info("LibreTranslate prewarm complete")
+    except Exception as e:
+        logger.warning("LibreTranslate prewarm failed: %s", e)
 
 
 async def translate_all(text: str, source: str = "en", needed: set[str] | None = None) -> dict[str, str]:

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 import uuid
@@ -13,13 +14,14 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .session import store
-from .translation import translate_all, close_client
+from .translation import translate_all, close_client, prewarm
 
 load_dotenv()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    asyncio.create_task(prewarm())
     yield
     await close_client()
 
