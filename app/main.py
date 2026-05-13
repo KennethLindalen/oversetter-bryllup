@@ -149,7 +149,7 @@ async def websocket_endpoint(websocket: WebSocket, code: str, role: str, lang: s
                 if not text:
                     continue
 
-                source_lang = data.get("source", "en")
+                source_lang = data.get("source", "auto")
                 if is_final:
                     translations = await translate_all(
                         text, source=source_lang, needed=session.needed_langs()

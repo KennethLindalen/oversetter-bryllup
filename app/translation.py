@@ -66,6 +66,24 @@ async def _translate_one(text: str, source: str, target: str) -> tuple[str, str]
         return target, text
 
 
+async def detect_language(text: str) -> str:
+    """Returns a LibreTranslate language code (en, nb, ru, ...). Falls back to 'nb'."""
+    url = os.getenv("LIBRETRANSLATE_URL", "http://libretranslate:5000").rstrip("/")
+    api_key = os.getenv("LIBRETRANSLATE_API_KEY", "")
+    payload = {"q": text}
+    if api_key:
+        payload["api_key"] = api_key
+    try:
+        resp = await get_client().post(f"{url}/detect", json=payload)
+        resp.raise_for_status()
+        results = resp.json()
+        if results:
+            return results[0]["language"]
+    except Exception as e:
+        logger.error("Language detection failed: %s", e)
+    return "nb"
+
+
 async def prewarm() -> None:
     """Translate a short dummy phrase so the models are hot before any real request."""
     try:
@@ -75,9 +93,13 @@ async def prewarm() -> None:
         logger.warning("LibreTranslate prewarm failed: %s", e)
 
 
-async def translate_all(text: str, source: str = "en", needed: set[str] | None = None) -> dict[str, str]:
-    """Translate text into needed languages. `needed` uses output keys: en, no, ru."""
-    lt_source = source  # source is already a LibreTranslate code (en/nb/ru)
+async def translate_all(text: str, source: str = "auto", needed: set[str] | None = None) -> dict[str, str]:
+    """Translate text into needed languages. `needed` uses output keys: en, no, ru.
+    Pass source='auto' to detect the language automatically."""
+    if source == "auto":
+        source = await detect_language(text)
+
+    lt_source = source  # LibreTranslate code (en/nb/ru)
 
     # Map output keys to LibreTranslate target codes
     key_to_lt = {"en": "en", "no": "nb", "ru": "ru"}
