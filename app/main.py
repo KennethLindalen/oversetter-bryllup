@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -147,18 +148,47 @@ async def transcribe(
             "https://api.openai.com/v1/audio/transcriptions",
             headers={"Authorization": f"Bearer {openai_key}"},
             files={"file": ("audio.webm", audio_bytes, "audio/webm")},
-            data={"model": "whisper-1", "language": WHISPER_LANG.get(lang, "no")},
+            data={
+                "model": "whisper-1",
+                "language": WHISPER_LANG.get(lang, "no"),
+                "response_format": "verbose_json",
+            },
         )
         if resp.status_code == 429:
             raise HTTPException(status_code=429, detail="OpenAI rate limit — speak in longer chunks or wait a moment")
         resp.raise_for_status()
-        text = resp.json().get("text", "").strip()
+        body = resp.json()
 
+    text = body.get("text", "").strip()
     if not text:
         return {"ok": True, "skipped": True}
 
-    source_key = "no" if lang in ("no", "nb") else lang
-    translations = await translate_all(text, source=source_key, needed=session.needed_langs())
+    # Discard chunks that are almost certainly silence/noise
+    segments = body.get("segments", [])
+    if segments:
+        avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
+        if avg_no_speech > 0.7:
+            return {"ok": True, "skipped": True}
+
+    # Discard chunks where Whisper transcribed in a different language than expected
+    # (cross-language output is almost always a hallucination)
+    LANG_BASES = {"en": "english", "no": "norwegian", "ru": "russian"}
+    expected_base = LANG_BASES.get(lang)
+    detected_lang = body.get("language", "").lower()
+    if expected_base and detected_lang and expected_base not in detected_lang:
+        return {"ok": True, "skipped": True}
+
+    # Discard known hallucination patterns (subtitle credits, filler phrases)
+    _HALLUCINATION_RE = re.compile(
+        r"\bsubtitl|\btekst\w*\s+av|undertekster\s+av|\btranscribed\s+by|"
+        r"ai.?media|\bcaptioned\s+by|thank\s+you\s+for\s+(watching|listening)|"
+        r"takk\s+for\s+at\s+du",
+        re.IGNORECASE,
+    )
+    if _HALLUCINATION_RE.search(text):
+        return {"ok": True, "skipped": True}
+
+    translations = await translate_all(text, source=lang, needed=session.needed_langs())
 
     await store.broadcast(code.upper(), {
         "type": "transcript",
