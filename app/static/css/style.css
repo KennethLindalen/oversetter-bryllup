@@ -168,7 +168,7 @@ button {
 
 /* 2nd — medium */
 .transcript-entry:nth-child(2) .transcript-translated {
-  font-size: clamp(1.2rem, 3vw, 1.6rem);
+  font-size: clamp(1.5rem, 3vw, 1.9rem);
   font-weight: 500;
   line-height: 1.25;
 }
@@ -176,14 +176,14 @@ button {
 
 /* 3rd — small */
 .transcript-entry:nth-child(3) .transcript-translated {
-  font-size: 1.05rem;
+  font-size: 1.35rem;
   font-weight: 400;
 }
 .transcript-entry:nth-child(3) .transcript-original { display: none; }
 
-/* Older — tiny */
+/* Older — floor */
 .transcript-entry:nth-child(n+4) .transcript-translated {
-  font-size: 0.85rem;
+  font-size: 1.1rem;
   font-weight: 400;
 }
 .transcript-entry:nth-child(n+4) .transcript-original { display: none; }
