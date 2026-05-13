@@ -71,12 +71,21 @@ function connectWs() {
   };
 }
 
-const LANG_MAP = { 'en-US': 'en', 'nb-NO': 'nb', 'ru-RU': 'ru' };
+// Maps select value → { source: LT code or "auto", recognitionLang: BCP-47 }
+const LANG_MAP = {
+  'auto':  { source: 'auto', recognitionLang: 'nb-NO' },
+  'en-US': { source: 'en',   recognitionLang: 'en-US' },
+  'nb-NO': { source: 'nb',   recognitionLang: 'nb-NO' },
+  'ru-RU': { source: 'ru',   recognitionLang: 'ru-RU' },
+};
+
+function getLangConfig() {
+  return LANG_MAP[document.getElementById('speech-lang').value] || LANG_MAP['auto'];
+}
 
 function sendTranscript(text, isFinal) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const bcp47 = document.getElementById('speech-lang').value;
-  const source = LANG_MAP[bcp47] || 'en';
+  const { source } = getLangConfig();
   ws.send(JSON.stringify({ type: 'transcript', text, is_final: isFinal, source }));
 }
 
@@ -99,7 +108,7 @@ micBtn.addEventListener('click', () => {
 
 function startRecording() {
   recognition = new SpeechRecognition();
-  recognition.lang = document.getElementById('speech-lang').value;
+  recognition.lang = getLangConfig().recognitionLang;
   recognition.continuous = true;
   recognition.interimResults = true;
 

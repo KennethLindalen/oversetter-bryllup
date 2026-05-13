@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 import uuid
@@ -13,13 +14,14 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .session import store
-from .translation import translate_all, close_client
+from .translation import translate_all, close_client, prewarm
 
 load_dotenv()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    asyncio.create_task(prewarm())
     yield
     await close_client()
 
@@ -147,7 +149,7 @@ async def websocket_endpoint(websocket: WebSocket, code: str, role: str, lang: s
                 if not text:
                     continue
 
-                source_lang = data.get("source", "en")
+                source_lang = data.get("source", "auto")
                 if is_final:
                     translations = await translate_all(
                         text, source=source_lang, needed=session.needed_langs()
