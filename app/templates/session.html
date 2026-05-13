@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Live Session{% endblock %}
+{% block body %}
+<div class="session-page">
+  <div class="lang-badge" id="lang-label"></div>
+  <div class="transcript-feed" id="feed"></div>
+  <div id="ended" class="session-ended hidden">Session has ended.</div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/session.js"></script>
+<script>
+  initSession("{{ code }}", "{{ lang }}");
+</script>
+{% endblock %}

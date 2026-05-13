@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Join Session{% endblock %}
+{% block body %}
+<div class="card">
+  <h1>Live Translator</h1>
+  <form id="join-form">
+    <label for="code">Session code</label>
+    <input id="code" type="text" maxlength="4" placeholder="XXXX" autocomplete="off" autocapitalize="characters" required>
+
+    <label for="lang">Display language</label>
+    <select id="lang">
+      <option value="en">English</option>
+      <option value="no">Norsk</option>
+      <option value="ru">Русский</option>
+    </select>
+
+    <p id="error" class="error hidden">Session not found. Check the code and try again.</p>
+
+    <button type="submit" class="btn-primary">Join</button>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  const form = document.getElementById('join-form');
+  const codeInput = document.getElementById('code');
+  const errorEl = document.getElementById('error');
+
+  codeInput.addEventListener('input', () => {
+    codeInput.value = codeInput.value.toUpperCase();
+    errorEl.classList.add('hidden');
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const code = codeInput.value.trim().toUpperCase();
+    const lang = document.getElementById('lang').value;
+    if (!code) return;
+
+    const res = await fetch(`/api/session/${code}/exists`);
+    if (res.ok) {
+      window.location.href = `/session/${code}?lang=${lang}`;
+    } else {
+      errorEl.classList.remove('hidden');
+    }
+  });
+</script>
+{% endblock %}

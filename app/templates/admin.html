@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Admin — Live Translator{% endblock %}
+{% block body %}
+
+<!-- Keyphrase gate -->
+<div class="card" id="auth-panel">
+  <h1>Admin Login</h1>
+  <form id="auth-form">
+    <label for="keyphrase">Admin keyphrase</label>
+    <input id="keyphrase" type="password" placeholder="Enter keyphrase" required>
+    <p id="auth-error" class="error hidden">Incorrect keyphrase.</p>
+    <button type="submit" class="btn-primary">Continue</button>
+  </form>
+</div>
+
+<!-- Admin control panel -->
+<div class="card hidden" id="admin-panel">
+  <h1>Live Translator</h1>
+
+  <!-- Pre-session -->
+  <div id="pre-session">
+    <h2>Ready to start</h2>
+    <button id="start-btn" class="btn-primary">Start Session</button>
+  </div>
+
+  <!-- Active session -->
+  <div id="active-session" class="hidden">
+    <h2>Session code</h2>
+    <div class="session-code" id="session-code"></div>
+    <div class="user-count" id="user-count">0 viewers connected</div>
+
+    <label for="speech-lang">Speaking language</label>
+    <select id="speech-lang">
+      <option value="en-US">English</option>
+      <option value="nb-NO" selected>Norsk</option>
+      <option value="ru-RU">Русский</option>
+    </select>
+
+    <button class="btn-mic" id="mic-btn" title="Hold to talk">🎤</button>
+    <p style="text-align:center;font-size:0.8rem;color:var(--text-muted)" id="mic-hint">Click to start microphone</p>
+
+    <h2 style="margin-top:1rem">Preview</h2>
+    <div class="preview-box" id="preview">Transcript will appear here…</div>
+
+    <button id="end-btn" class="btn-danger">End Session</button>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/admin.js"></script>
+{% endblock %}
