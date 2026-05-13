@@ -130,6 +130,10 @@ function recordCycle() {
         const res = await fetch('/api/transcribe', { method: 'POST', body: form });
         if (res.status === 429) {
           micHint.textContent = 'Rate limited — speak slower or use longer pauses';
+        } else if (res.status === 404) {
+          stopRecording();
+          micHint.textContent = 'Session lost — please end and restart the session';
+          return;
         } else if (res.ok) {
           const data = await res.json();
           if (data.text) preview.textContent = data.text;
