@@ -1,15 +1,47 @@
-function initSession(code, lang) {
+const LANG_NAMES = { en: 'English', no: 'Norsk', ru: 'Русский' };
+
+function initSession(code, initialLang) {
   const feed = document.getElementById('feed');
   const ended = document.getElementById('ended');
   const langLabel = document.getElementById('lang-label');
+  const switcher = document.getElementById('lang-switcher');
 
-  const LANG_NAMES = { en: 'English', no: 'Norsk', ru: 'Русский' };
-  langLabel.textContent = LANG_NAMES[lang] || lang;
+  let lang = initialLang;
+  const entries = []; // { translations, original, isInterim }
+
+  // Populate language switcher
+  Object.entries(LANG_NAMES).forEach(([code, name]) => {
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = name;
+    if (code === lang) opt.selected = true;
+    switcher.appendChild(opt);
+  });
+
+  function updateLangLabel() {
+    langLabel.textContent = LANG_NAMES[lang] || lang;
+  }
+  updateLangLabel();
+
+  switcher.addEventListener('change', () => {
+    lang = switcher.value;
+    updateLangLabel();
+    rerenderAll();
+  });
+
+  function rerenderAll() {
+    feed.innerHTML = '';
+    entries.forEach((entry) => {
+      const el = createEntry(entry.translations, entry.original, entry.isInterim);
+      feed.appendChild(el);
+    });
+    feed.scrollTop = feed.scrollHeight;
+  }
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws/${code}/client`);
 
-  let interimEntry = null;
+  let interimIndex = null;
 
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
@@ -22,24 +54,29 @@ function initSession(code, lang) {
 
     if (msg.type !== 'transcript') return;
 
-    const translated = msg.translations?.[lang] || msg.original;
-    const original = msg.original;
-
     if (!msg.is_final) {
-      if (!interimEntry) {
-        interimEntry = createEntry(translated, original, true);
-        feed.appendChild(interimEntry);
+      if (interimIndex === null) {
+        entries.push({ translations: msg.translations, original: msg.original, isInterim: true });
+        interimIndex = entries.length - 1;
+        feed.appendChild(createEntry(msg.translations, msg.original, true));
       } else {
-        interimEntry.querySelector('.transcript-translated').textContent = translated;
-        interimEntry.querySelector('.transcript-original').textContent = original;
+        entries[interimIndex] = { translations: msg.translations, original: msg.original, isInterim: true };
+        const els = feed.querySelectorAll('.transcript-entry');
+        const el = els[interimIndex];
+        if (el) {
+          el.querySelector('.transcript-translated').textContent = msg.translations?.[lang] || msg.original;
+          el.querySelector('.transcript-original').textContent = msg.original;
+        }
       }
     } else {
-      if (interimEntry) {
-        interimEntry.remove();
-        interimEntry = null;
+      if (interimIndex !== null) {
+        entries[interimIndex] = { translations: msg.translations, original: msg.original, isInterim: false };
+        interimIndex = null;
+        rerenderAll();
+      } else {
+        entries.push({ translations: msg.translations, original: msg.original, isInterim: false });
+        feed.appendChild(createEntry(msg.translations, msg.original, false));
       }
-      const entry = createEntry(translated, original, false);
-      feed.appendChild(entry);
     }
 
     feed.scrollTop = feed.scrollHeight;
@@ -51,7 +88,8 @@ function initSession(code, lang) {
     ended.classList.remove('hidden');
   };
 
-  function createEntry(translated, original, isInterim) {
+  function createEntry(translations, original, isInterim) {
+    const translated = translations?.[lang] || original;
     const div = document.createElement('div');
     div.className = 'transcript-entry' + (isInterim ? ' interim' : '');
     div.innerHTML = `
@@ -62,6 +100,6 @@ function initSession(code, lang) {
   }
 
   function escHtml(str) {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 }

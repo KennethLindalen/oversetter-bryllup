@@ -2,7 +2,10 @@
 {% block title %}Live Session{% endblock %}
 {% block body %}
 <div class="session-page">
-  <div class="lang-badge" id="lang-label"></div>
+  <div class="session-header">
+    <div class="lang-badge" id="lang-label"></div>
+    <select id="lang-switcher" title="Change language"></select>
+  </div>
   <div class="transcript-feed" id="feed"></div>
   <div id="ended" class="session-ended hidden">Session has ended.</div>
 </div>

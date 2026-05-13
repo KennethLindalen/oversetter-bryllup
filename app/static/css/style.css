@@ -164,10 +164,24 @@ button {
   font-size: 1.2rem;
 }
 
+.session-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.25rem 0;
+}
+
 .lang-badge {
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--accent);
-  margin-bottom: 0.5rem;
+}
+
+#lang-switcher {
+  width: auto;
+  margin-bottom: 0;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.7rem;
 }
